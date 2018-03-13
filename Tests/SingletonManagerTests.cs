@@ -12,15 +12,13 @@ namespace RSG.Tests
     {
         static Mock<ILogger> mockLogger;
         static Mock<IFactory> mockFactory;
-        static Mock<IReflection> mockReflection;
         static SingletonManager testObject;
 
         static void Init()
         {
             mockFactory = new Mock<IFactory>();
-            mockReflection = new Mock<IReflection>();
             mockLogger = new Mock<ILogger>();
-            testObject = new SingletonManager(mockReflection.Object, mockLogger.Object, mockFactory.Object);
+            testObject = new SingletonManager(mockLogger.Object, mockFactory.Object);
         }
 
         static void InitTestSingleton(Type singletonType, object singleton, params string[] dependencyNames)
@@ -162,6 +160,92 @@ namespace RSG.Tests
                 Assert.Equal(2, testObject.Singletons.Length);
                 Assert.Equal(singleton1, testObject.Singletons[0]);
                 Assert.Equal(singleton2, testObject.Singletons[1]);
+            }
+        }
+
+        public class shutdown_is_performed_in_reverse_order_to_startup
+        {
+            public interface ITest1
+            {
+                bool ShutdownPerformed { get; }
+            }
+
+            public class Test1 : ITest1, IStartable
+            {
+                public void Shutdown()
+                {
+                    ShutdownPerformed = true;
+                }
+
+                public void Startup()
+                {
+                    ShutdownPerformed = false;
+                }
+
+                public bool ShutdownPerformed { get; private set; }
+            }
+
+            public class Test2 : IStartable
+            {
+                [Dependency]
+                public ITest1 Test1 { get; set; }
+
+                public bool ShutdownPerformedCorrectly { get; private set; }
+
+                public void Shutdown()
+                {
+                    Assert.False(Test1.ShutdownPerformed);
+                    ShutdownPerformedCorrectly = true;
+                }
+
+                public void Startup()
+                {
+                    ShutdownPerformedCorrectly = false;
+                }
+            }
+
+            [Fact]
+            public void when_in_correct_order()
+            {
+                Init();
+
+                var singletonType1 = typeof(Test1);
+                var singleton1 = new Test1();
+                InitTestSingleton(singletonType1, singleton1, typeof(ITest1).Name);
+
+                var singletonType2 = typeof(Test2);
+                var singleton2 = new Test2();
+                InitTestSingleton(singletonType2, singleton2);
+
+                testObject.InstantiateSingletons(mockFactory.Object);
+
+                singleton2.Test1 = singleton1;
+
+                testObject.Shutdown();
+
+                Assert.True(singleton2.ShutdownPerformedCorrectly);
+            }
+
+            [Fact]
+            public void when_out_of_order()
+            {
+                Init();
+
+                var singletonType2 = typeof(Test2);
+                var singleton2 = new Test2();
+                InitTestSingleton(singletonType2, singleton2);
+
+                var singletonType1 = typeof(Test1);
+                var singleton1 = new Test1();
+                InitTestSingleton(singletonType1, singleton1, typeof(ITest1).Name);
+
+                testObject.InstantiateSingletons(mockFactory.Object);
+
+                singleton2.Test1 = singleton1;
+
+                testObject.Shutdown();
+
+                Assert.True(singleton2.ShutdownPerformedCorrectly);
             }
         }
         
